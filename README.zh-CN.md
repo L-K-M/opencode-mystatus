@@ -25,6 +25,31 @@
 Install the opencode-mystatus plugin by following: https://raw.githubusercontent.com/vbgate/opencode-mystatus/main/README.md
 ```
 
+<details>
+<summary><b>AI 代理安装指令</b></summary>
+
+安装此插件需要执行以下步骤：
+
+1. 在 `~/.config/opencode/opencode.json` 的 `plugin` 数组中添加 `"opencode-mystatus@1.0.1"`
+
+2. 在同一文件的 `command` 对象中添加斜杠命令：
+
+```json
+{
+  "plugin": ["opencode-mystatus@1.0.1"],
+  "command": {
+    "mystatus": {
+      "description": "Query quota usage for all AI accounts",
+      "template": "Use the mystatus tool to query quota usage. Return the result as-is without modification."
+    }
+  }
+}
+```
+
+3. 告诉用户重启 OpenCode。
+
+</details>
+
 ### 从 npm 安装
 
 在 `~/.config/opencode/opencode.json` 中添加：

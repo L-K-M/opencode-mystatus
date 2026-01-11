@@ -25,6 +25,31 @@ Paste this into any LLM agent (Claude Code, OpenCode, Cursor, etc.):
 Install the opencode-mystatus plugin by following: https://raw.githubusercontent.com/vbgate/opencode-mystatus/main/README.md
 ```
 
+<details>
+<summary><b>Instructions for LLM agents</b></summary>
+
+To install this plugin, perform these steps:
+
+1. Add `"opencode-mystatus@1.0.1"` to the `plugin` array in `~/.config/opencode/opencode.json`
+
+2. Add the slash command to the `command` object in the same file:
+
+```json
+{
+  "plugin": ["opencode-mystatus@1.0.1"],
+  "command": {
+    "mystatus": {
+      "description": "Query quota usage for all AI accounts",
+      "template": "Use the mystatus tool to query quota usage. Return the result as-is without modification."
+    }
+  }
+}
+```
+
+3. Tell the user to restart OpenCode.
+
+</details>
+
 ### From npm
 
 Add to your `~/.config/opencode/opencode.json`:
