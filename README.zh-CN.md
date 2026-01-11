@@ -17,6 +17,14 @@
 
 ## 安装
 
+### 让 AI 帮你安装
+
+将以下内容粘贴到任意 AI 代理（Claude Code、OpenCode、Cursor 等）：
+
+```
+Install the opencode-mystatus plugin by following: https://raw.githubusercontent.com/vbgate/opencode-mystatus/main/README.md
+```
+
 ### 从 npm 安装
 
 在 `opencode.json` 中添加：

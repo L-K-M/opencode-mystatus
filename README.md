@@ -17,6 +17,14 @@ An [OpenCode](https://opencode.ai) plugin to query account quota usage for multi
 
 ## Installation
 
+### Let an LLM do it
+
+Paste this into any LLM agent (Claude Code, OpenCode, Cursor, etc.):
+
+```
+Install the opencode-mystatus plugin by following: https://raw.githubusercontent.com/vbgate/opencode-mystatus/main/README.md
+```
+
 ### From npm
 
 Add to your `opencode.json`:
