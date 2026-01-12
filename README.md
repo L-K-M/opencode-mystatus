@@ -216,6 +216,23 @@ cd ~/.config/opencode && npm link opencode-mystatus
 # 4. Restart OpenCode
 ```
 
+### Install from Local
+
+```bash
+# 1. Build and link
+cd /path/to/opencode-mystatus
+npm run build && npm link
+
+# 2. Link in OpenCode directories
+cd ~/.local/share/opencode && npm link opencode-mystatus
+cd ~/.config/opencode && npm link opencode-mystatus
+
+# 3. Update ~/.config/opencode/opencode.json: remove version suffix
+#    "opencode-mystatus@1.0.1" → "opencode-mystatus"
+
+# 4. Restart OpenCode
+```
+
 ## License
 
 MIT
