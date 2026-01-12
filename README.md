@@ -33,13 +33,13 @@ Install the opencode-mystatus plugin by following: https://raw.githubusercontent
 
 To install this plugin, perform these steps:
 
-1. Add `"opencode-mystatus@1.0.1"` to the `plugin` array in `~/.config/opencode/opencode.json`
+1. Add `"opencode-mystatus@1.1.0"` to the `plugin` array in `~/.config/opencode/opencode.json`
 
 2. Add the slash command to the `command` object in the same file:
 
 ```json
 {
-  "plugin": ["opencode-mystatus@1.0.1"],
+  "plugin": ["opencode-mystatus@1.1.0"],
   "command": {
     "mystatus": {
       "description": "Query quota usage for all AI accounts",
@@ -59,7 +59,7 @@ To install this plugin, perform these steps:
 
 ```json
 {
-  "plugin": ["opencode-mystatus@1.0.1"],
+  "plugin": ["opencode-mystatus@1.1.0"],
   "command": {
     "mystatus": {
       "description": "Query quota usage for all AI accounts",

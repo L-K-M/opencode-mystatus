@@ -33,13 +33,13 @@ Install the opencode-mystatus plugin by following: https://raw.githubusercontent
 
 安装此插件需要执行以下步骤：
 
-1. 在 `~/.config/opencode/opencode.json` 的 `plugin` 数组中添加 `"opencode-mystatus@1.0.1"`
+1. 在 `~/.config/opencode/opencode.json` 的 `plugin` 数组中添加 `"opencode-mystatus@1.1.0"`
 
 2. 在同一文件的 `command` 对象中添加斜杠命令：
 
 ```json
 {
-  "plugin": ["opencode-mystatus@1.0.1"],
+  "plugin": ["opencode-mystatus@1.1.0"],
   "command": {
     "mystatus": {
       "description": "Query quota usage for all AI accounts",
@@ -59,7 +59,7 @@ Install the opencode-mystatus plugin by following: https://raw.githubusercontent
 
 ```json
 {
-  "plugin": ["opencode-mystatus@1.0.1"],
+  "plugin": ["opencode-mystatus@1.1.0"],
   "command": {
     "mystatus": {
       "description": "Query quota usage for all AI accounts",
