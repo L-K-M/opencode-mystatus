@@ -23,7 +23,11 @@
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
     "format": "prettier --write .",
-    "prepublishOnly": "npm run lint && npm run build"
+    "prepublishOnly": "npm run lint && npm run build",
+    "mystatus": "tsx --no-cache cli.ts",
+    "mystatus:watch": "tsx --no-cache cli.ts --watch",
+    "mystatus:watch:fast": "tsx --no-cache cli.ts --watch --interval 1",
+    "cli": "tsx --no-cache cli.ts"
   },
   "keywords": [
     "opencode",
@@ -49,7 +53,9 @@
   },
   "homepage": "https://github.com/vbgate/opencode-mystatus#readme",
   "dependencies": {
-    "@opencode-ai/plugin": "1.1.27"
+    "@opencode-ai/plugin": "^1.1.0",
+    "chalk": "^5.6.2",
+    "commander": "^14.0.3"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
@@ -59,6 +65,7 @@
     "eslint-config-prettier": "^10.1.8",
     "globals": "^17.0.0",
     "prettier": "^3.7.4",
+    "tsx": "^4.7.0",
     "typescript": "^5.8.0"
   },
   "peerDependencies": {
