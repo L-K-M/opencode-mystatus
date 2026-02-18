@@ -755,15 +755,17 @@ async function fetchAndDisplayQuotas(
     showAccountQuota: true,
     showFooter: true,
   },
+  backgroundRefresh: boolean = false,
 ) {
   const renderWidth = getRenderWidth(config.maxWidth);
+  const deferRedrawUntilDataReady = watchMode && backgroundRefresh;
 
-  if (watchMode) {
+  if (watchMode && !deferRedrawUntilDataReady) {
     // In watch mode, fully clear before each redraw to avoid visual overlap.
     clearScreen(true);
   }
 
-  if (config.showHeader) {
+  if (config.showHeader && !deferRedrawUntilDataReady) {
     createDashboardHeader(renderWidth, watchMode, interval);
   }
 
@@ -775,6 +777,13 @@ async function fetchAndDisplayQuotas(
     const content = await readFile(authPath, "utf-8");
     authData = JSON.parse(content);
   } catch (err) {
+    if (deferRedrawUntilDataReady) {
+      clearScreen(true);
+      if (config.showHeader) {
+        createDashboardHeader(renderWidth, watchMode, interval);
+      }
+    }
+
     const errorLines = [
       chalk.red.bold("❌ Error reading auth file"),
       chalk.gray(authPath),
@@ -793,8 +802,10 @@ async function fetchAndDisplayQuotas(
   }
 
   // 2. Query all platforms in parallel
-  console.log(fitLineToWidth(chalk.gray("⟳ Querying all platforms..."), renderWidth));
-  console.log();
+  if (!deferRedrawUntilDataReady) {
+    console.log(fitLineToWidth(chalk.gray("⟳ Querying all platforms..."), renderWidth));
+    console.log();
+  }
 
   const [
     openaiResult,
@@ -817,6 +828,13 @@ async function fetchAndDisplayQuotas(
     withDerivedZaiUsage(rawZaiResult, zaiDerivedTokenUsage),
   );
   const normalizedCopilotResult = withNormalizedCopilotLayout(copilotResult);
+
+  if (deferRedrawUntilDataReady) {
+    clearScreen(true);
+    if (config.showHeader) {
+      createDashboardHeader(renderWidth, watchMode, interval);
+    }
+  }
 
   // 3. Collect results
   const results: Array<{ title: string; icon: string; content: string }> = [];
@@ -1098,7 +1116,7 @@ async function main() {
       }
 
       if (isRunning) {
-        await fetchAndDisplayQuotas(true, interval, config);
+        await fetchAndDisplayQuotas(true, interval, config, true);
         poll(); // Schedule next poll
       }
     };
