@@ -10,7 +10,6 @@ import { join } from "path";
 import chalk from "chalk";
 import { program } from "commander";
 
-import { t } from "./plugin/lib/i18n";
 import { type AuthData, type QueryResult } from "./plugin/lib/types";
 import { queryOpenAIUsage } from "./plugin/lib/openai";
 import { queryZaiUsage, queryZhipuUsage } from "./plugin/lib/zhipu";
@@ -24,11 +23,28 @@ import { queryCopilotUsage } from "./plugin/lib/copilot";
 let isRunning = true;
 let nextUpdateTime: Date | null = null;
 
+interface DashboardConfig {
+  showHeader: boolean;
+  showSummary: boolean;
+  showAccountQuota: boolean;
+  showFooter: boolean;
+  maxWidth?: number;
+}
+
+const DEFAULT_WIDTH = 80;
+const MIN_WIDTH = 20;
+const ANSI_ESCAPE = "\u001b";
+
 // ============================================================================
 // Utility Functions
 // ============================================================================
 
-function clearScreen() {
+function clearScreen(full: boolean = false) {
+  if (full) {
+    process.stdout.write("\x1b[2J\x1b[H");
+    return;
+  }
+
   // Move cursor to home position without clearing
   // This prevents the blank/flicker effect
   process.stdout.write("\x1b[H");
@@ -55,12 +71,112 @@ function getTimeUntilNextUpdate(): string {
   return `${seconds}s`;
 }
 
+function getTerminalWidth(): number {
+  if (typeof process.stdout.columns === "number" && process.stdout.columns > 0) {
+    return process.stdout.columns;
+  }
+
+  return DEFAULT_WIDTH;
+}
+
+function getRenderWidth(maxWidth?: number): number {
+  const terminalWidth = getTerminalWidth();
+
+  if (!maxWidth) {
+    return terminalWidth;
+  }
+
+  const minWidth = Math.min(MIN_WIDTH, terminalWidth);
+  return Math.max(minWidth, Math.min(maxWidth, terminalWidth));
+}
+
+function stripAnsi(text: string): string {
+  let result = "";
+
+  for (let i = 0; i < text.length; i += 1) {
+    if (text[i] === ANSI_ESCAPE && text[i + 1] === "[") {
+      i += 2;
+      while (i < text.length && text[i] !== "m") {
+        i += 1;
+      }
+      continue;
+    }
+
+    result += text[i];
+  }
+
+  return result;
+}
+
+function fitLineToWidth(line: string, width: number): string {
+  if (width <= 0) {
+    return "";
+  }
+
+  if (stripAnsi(line).length <= width) {
+    return line;
+  }
+
+  const ellipsis = "...";
+  const targetLength = Math.max(0, width - ellipsis.length);
+  let visibleChars = 0;
+  let index = 0;
+  let result = "";
+
+  while (index < line.length && visibleChars < targetLength) {
+    if (line[index] === ANSI_ESCAPE && line[index + 1] === "[") {
+      let ansiEndIndex = index + 2;
+      while (ansiEndIndex < line.length && line[ansiEndIndex] !== "m") {
+        ansiEndIndex += 1;
+      }
+
+      if (ansiEndIndex < line.length) {
+        result += line.slice(index, ansiEndIndex + 1);
+        index = ansiEndIndex + 1;
+        continue;
+      }
+    }
+
+    result += line[index];
+    index += 1;
+    visibleChars += 1;
+  }
+
+  if (result.includes(`${ANSI_ESCAPE}[`)) {
+    result += `${ANSI_ESCAPE}[0m`;
+  }
+
+  return result + ellipsis;
+}
+
+function centerText(text: string, width: number): string {
+  if (width <= 0) {
+    return "";
+  }
+
+  let displayText = text;
+  if (displayText.length > width) {
+    if (width <= 3) {
+      displayText = ".".repeat(width);
+    } else {
+      displayText = displayText.slice(0, width - 3) + "...";
+    }
+  }
+
+  const totalPadding = Math.max(0, width - displayText.length);
+  const leftPadding = Math.floor(totalPadding / 2);
+  const rightPadding = totalPadding - leftPadding;
+
+  return " ".repeat(leftPadding) + displayText + " ".repeat(rightPadding);
+}
+
 // ============================================================================
 // Dashboard Styling Functions
 // ============================================================================
 
-function createDashboardHeader(watchMode: boolean = false, interval?: number) {
-  const width = 80;
+function createDashboardHeader(width: number, watchMode: boolean = false, interval?: number) {
+  const safeWidth = Math.max(4, width);
+  const contentWidth = safeWidth - 2;
   const title = "AI ACCOUNT QUOTA DASHBOARD";
   const date = new Date().toLocaleDateString("en-US", {
     weekday: "short",
@@ -71,15 +187,15 @@ function createDashboardHeader(watchMode: boolean = false, interval?: number) {
     minute: "2-digit",
   });
 
-  console.log(chalk.bold.cyan("┌" + "─".repeat(width - 2) + "┐"));
+  console.log(chalk.bold.cyan("┌" + "─".repeat(contentWidth) + "┐"));
   console.log(
     chalk.bold.cyan("│") +
-      chalk.bold.white(title.padStart((width + title.length) / 2 - 1).padEnd(width - 2)) +
+      chalk.bold.white(centerText(title, contentWidth)) +
       chalk.bold.cyan("│")
   );
   console.log(
     chalk.bold.cyan("│") +
-      chalk.gray(date.padStart((width + date.length) / 2 - 1).padEnd(width - 2)) +
+      chalk.gray(centerText(date, contentWidth)) +
       chalk.bold.cyan("│")
   );
 
@@ -87,20 +203,19 @@ function createDashboardHeader(watchMode: boolean = false, interval?: number) {
     const modeText = `🔄 Watch Mode • Updating every ${interval} minute${interval !== 1 ? 's' : ''}`;
     console.log(
       chalk.bold.cyan("│") +
-        chalk.yellow(modeText.padStart((width + modeText.length) / 2 - 1).padEnd(width - 2)) +
+        chalk.yellow(centerText(modeText, contentWidth)) +
         chalk.bold.cyan("│")
     );
   }
 
-  console.log(chalk.bold.cyan("└" + "─".repeat(width - 2) + "┘"));
+  console.log(chalk.bold.cyan("└" + "─".repeat(contentWidth) + "┘"));
   console.log();
 }
 
-function createSectionBox(title: string, icon: string) {
-  console.log(
-    chalk.bold.white(`\n${icon}  ${title}`)
-  );
-  console.log(chalk.gray("─".repeat(78)));
+function createSectionBox(title: string, icon: string, width: number) {
+  console.log();
+  console.log(fitLineToWidth(chalk.bold.white(`${icon}  ${title}`), width));
+  console.log(chalk.gray("─".repeat(width)));
 }
 
 function formatProgressBar(text: string): string {
@@ -137,7 +252,7 @@ function formatProgressBar(text: string): string {
   return colored;
 }
 
-function formatOutputContent(content: string): string {
+function formatOutputContent(content: string, width: number): string {
   const lines = content.split("\n");
   const formatted: string[] = [];
 
@@ -180,7 +295,7 @@ function formatOutputContent(content: string): string {
       line = "  " + chalk.gray(trimmed);
     }
 
-    formatted.push(line);
+    formatted.push(fitLineToWidth(line, width));
   }
 
   return formatted.join("\n");
@@ -208,12 +323,25 @@ function collectResult(
   }
 }
 
-async function fetchAndDisplayQuotas(watchMode: boolean = false, interval?: number) {
+async function fetchAndDisplayQuotas(
+  watchMode: boolean = false,
+  interval?: number,
+  config: DashboardConfig = {
+    showHeader: true,
+    showSummary: true,
+    showAccountQuota: true,
+    showFooter: true,
+  },
+) {
+  const renderWidth = getRenderWidth(config.maxWidth);
+
   if (watchMode) {
     clearScreen();
   }
 
-  createDashboardHeader(watchMode, interval);
+  if (config.showHeader) {
+    createDashboardHeader(renderWidth, watchMode, interval);
+  }
 
   // 1. Read auth.json
   const authPath = join(homedir(), ".local/share/opencode/auth.json");
@@ -223,11 +351,17 @@ async function fetchAndDisplayQuotas(watchMode: boolean = false, interval?: numb
     const content = await readFile(authPath, "utf-8");
     authData = JSON.parse(content);
   } catch (err) {
-    console.log(
-      chalk.red.bold("❌ Error reading auth file\n") +
-      chalk.gray(authPath) + "\n" +
-      chalk.yellow(err instanceof Error ? err.message : String(err))
-    );
+    const errorLines = [
+      chalk.red.bold("❌ Error reading auth file"),
+      chalk.gray(authPath),
+      chalk.yellow(err instanceof Error ? err.message : String(err)),
+    ];
+
+    console.log();
+    for (const line of errorLines) {
+      console.log(fitLineToWidth(line, renderWidth));
+    }
+
     if (!watchMode) {
       process.exit(1);
     }
@@ -235,7 +369,9 @@ async function fetchAndDisplayQuotas(watchMode: boolean = false, interval?: numb
   }
 
   // 2. Query all platforms in parallel
-  console.log(chalk.gray("⟳ Querying all platforms...\n"));
+  console.log(fitLineToWidth(chalk.gray("⟳ Querying all platforms..."), renderWidth));
+  console.log();
+
   const [openaiResult, zhipuResult, zaiResult, googleResult, copilotResult] =
     await Promise.all([
       queryOpenAIUsage(authData.openai),
@@ -257,93 +393,111 @@ async function fetchAndDisplayQuotas(watchMode: boolean = false, interval?: numb
 
   // 4. Output results
   if (results.length === 0 && errors.length === 0) {
-    console.log(chalk.yellow.bold("\n⚠️  No configured accounts found\n"));
-    console.log(chalk.gray("Supported platforms:"));
-    console.log(chalk.gray("  • OpenAI (Plus/Team/Pro subscriptions)"));
-    console.log(chalk.gray("  • Zhipu AI (Coding Plan)"));
-    console.log(chalk.gray("  • Z.ai (Coding Plan)"));
-    console.log(chalk.gray("  • Google Cloud (Antigravity)"));
-    console.log(chalk.gray("  • GitHub Copilot"));
+    console.log();
+    console.log(fitLineToWidth(chalk.yellow.bold("⚠️  No configured accounts found"), renderWidth));
+    console.log();
+    console.log(fitLineToWidth(chalk.gray("Supported platforms:"), renderWidth));
+    console.log(fitLineToWidth(chalk.gray("  • OpenAI (Plus/Team/Pro subscriptions)"), renderWidth));
+    console.log(fitLineToWidth(chalk.gray("  • Zhipu AI (Coding Plan)"), renderWidth));
+    console.log(fitLineToWidth(chalk.gray("  • Z.ai (Coding Plan)"), renderWidth));
+    console.log(fitLineToWidth(chalk.gray("  • Google Cloud (Antigravity)"), renderWidth));
+    console.log(fitLineToWidth(chalk.gray("  • GitHub Copilot"), renderWidth));
+
     if (!watchMode) {
       process.exit(0);
     }
     return;
   }
 
-  // Display results
-  console.log(chalk.bold.white("📊 Summary\n"));
-  console.log(chalk.gray("  Active platforms: ") + chalk.green.bold(results.length));
-  for (const result of results) {
-    // Extract all percentages from content
-    const percentMatches = result.content.match(/(\d+)%/g);
-    let lowestPercent: number | null = null;
+  if (config.showSummary) {
+    console.log(fitLineToWidth(chalk.bold.white("📊 Summary"), renderWidth));
+    console.log();
+    console.log(fitLineToWidth(chalk.gray("  Active platforms: ") + chalk.green.bold(results.length), renderWidth));
 
-    if (percentMatches) {
-      const percents = percentMatches.map(m => parseInt(m.replace('%', '')));
-      lowestPercent = Math.min(...percents);
-    }
+    for (const result of results) {
+      // Extract all percentages from content
+      const percentMatches = result.content.match(/(\d+)%/g);
+      let lowestPercent: number | null = null;
 
-    let statusIcon = "●";
-    let statusColor = chalk.gray;
-    let statusText = "";
-
-    if (lowestPercent !== null) {
-      if (lowestPercent >= 70) {
-        statusIcon = "●";
-        statusColor = chalk.green;
-        statusText = chalk.green(`(${lowestPercent}%)`);
-      } else if (lowestPercent >= 40) {
-        statusIcon = "●";
-        statusColor = chalk.yellow;
-        statusText = chalk.yellow(`(${lowestPercent}%)`);
-      } else {
-        statusIcon = "●";
-        statusColor = chalk.red;
-        statusText = chalk.red.bold(`(${lowestPercent}% ⚠️)`);
+      if (percentMatches) {
+        const percents = percentMatches.map(m => parseInt(m.replace("%", "")));
+        lowestPercent = Math.min(...percents);
       }
+
+      let statusIcon = "●";
+      let statusColor = chalk.gray;
+      let statusText = "";
+
+      if (lowestPercent !== null) {
+        if (lowestPercent >= 70) {
+          statusIcon = "●";
+          statusColor = chalk.green;
+          statusText = chalk.green(`(${lowestPercent}%)`);
+        } else if (lowestPercent >= 40) {
+          statusIcon = "●";
+          statusColor = chalk.yellow;
+          statusText = chalk.yellow(`(${lowestPercent}%)`);
+        } else {
+          statusIcon = "●";
+          statusColor = chalk.red;
+          statusText = chalk.red.bold(`(${lowestPercent}% ⚠️)`);
+        }
+      }
+
+      console.log(
+        fitLineToWidth(
+          "  " + statusColor(statusIcon) + " " +
+            chalk.white(result.icon + " " + result.title.replace(" Account Quota", "")) +
+            " " + statusText,
+          renderWidth,
+        ),
+      );
     }
 
-    console.log(
-      "  " + statusColor(statusIcon) + " " +
-      chalk.white(result.icon + " " + result.title.replace(" Account Quota", "")) +
-      " " + statusText
-    );
+    console.log();
   }
-  console.log();
 
   // Display detailed results
-  for (const result of results) {
-    createSectionBox(result.title, result.icon);
-    console.log(formatOutputContent(result.content));
+  if (config.showAccountQuota) {
+    for (const result of results) {
+      createSectionBox(result.title, result.icon, renderWidth);
+      console.log(formatOutputContent(result.content, renderWidth));
+    }
   }
 
   // Display errors if any
   if (errors.length > 0) {
-    console.log(chalk.red.bold("\n\n❌ Errors occurred:"));
-    console.log(chalk.gray("─".repeat(78)));
+    console.log();
+    console.log(fitLineToWidth(chalk.red.bold("❌ Errors occurred:"), renderWidth));
+    console.log(chalk.gray("─".repeat(renderWidth)));
+
     for (const error of errors) {
-      console.log(chalk.red("  • " + error));
+      console.log(fitLineToWidth(chalk.red("  • " + error), renderWidth));
     }
   }
 
   // Footer
-  console.log(chalk.gray("\n" + "─".repeat(78)));
-  const footerParts = [
-    chalk.gray("  Last updated: ") + chalk.white(new Date().toLocaleTimeString())
-  ];
+  if (config.showFooter) {
+    console.log();
+    console.log(chalk.gray("─".repeat(renderWidth)));
 
-  if (watchMode && nextUpdateTime) {
-    footerParts.push(
-      chalk.gray("  Next update in: ") + chalk.cyan(getTimeUntilNextUpdate())
-    );
+    const footerParts = [
+      chalk.gray("  Last updated: ") + chalk.white(new Date().toLocaleTimeString()),
+    ];
+
+    if (watchMode && nextUpdateTime) {
+      footerParts.push(
+        chalk.gray("  Next update in: ") + chalk.cyan(getTimeUntilNextUpdate()),
+      );
+    }
+
+    if (watchMode) {
+      footerParts.push(chalk.gray("  Press Ctrl+C to exit"));
+    }
+
+    console.log(fitLineToWidth(footerParts.join(chalk.gray(" • ")), renderWidth));
+    console.log();
   }
-
-  if (watchMode) {
-    footerParts.push(chalk.gray("  Press Ctrl+C to exit"));
-  }
-
-  console.log(footerParts.join(chalk.gray(" • ")));
-  console.log();
 
   // Clear any remaining content from previous render
   if (watchMode) {
@@ -358,16 +512,96 @@ async function main() {
     .description("Monitor AI account quotas in a beautiful dashboard")
     .option("-w, --watch", "Watch mode: continuously poll and update", false)
     .option("-i, --interval <minutes>", "Polling interval in minutes (default: 5)", "5")
+    .option(
+      "--show <sections>",
+      "Comma-separated sections to show: header,summary,dashboard,footer",
+    )
+    .option("--width <columns>", "Set max dashboard width (default: auto-detect terminal width)")
     .parse();
 
-  const options = program.opts();
+  const options = program.opts<{
+    watch: boolean;
+    interval: string;
+    show?: string;
+    width?: string;
+  }>();
+
   const watchMode = options.watch;
-  const interval = parseInt(options.interval);
+  const interval = parseInt(options.interval, 10);
 
   if (isNaN(interval) || interval < 1) {
     console.error(chalk.red("Error: Interval must be a positive number"));
     process.exit(1);
   }
+
+  let maxWidth: number | undefined;
+  if (typeof options.width === "string") {
+    maxWidth = parseInt(options.width, 10);
+    if (isNaN(maxWidth) || maxWidth < MIN_WIDTH) {
+      console.error(chalk.red(`Error: Width must be a number >= ${MIN_WIDTH}`));
+      process.exit(1);
+    }
+  }
+
+  const config: DashboardConfig = {
+    showHeader: true,
+    showSummary: true,
+    showAccountQuota: true,
+    showFooter: true,
+    maxWidth,
+  };
+
+  if (typeof options.show === "string") {
+    const sections = options.show
+      .split(",")
+      .map(section => section.trim().toLowerCase())
+      .filter(section => section.length > 0);
+
+    if (sections.length === 0) {
+      console.error(chalk.red("Error: --show must include at least one section"));
+      process.exit(1);
+    }
+
+    config.showHeader = false;
+    config.showSummary = false;
+    config.showAccountQuota = false;
+    config.showFooter = false;
+
+    const unknownSections: string[] = [];
+
+    for (const section of sections) {
+      switch (section) {
+        case "header":
+          config.showHeader = true;
+          break;
+        case "summary":
+          config.showSummary = true;
+          break;
+        case "dashboard":
+        case "account-quota":
+        case "accountquota":
+          config.showAccountQuota = true;
+          break;
+        case "footer":
+          config.showFooter = true;
+          break;
+        default:
+          unknownSections.push(section);
+          break;
+      }
+    }
+
+    if (unknownSections.length > 0) {
+      console.error(
+        chalk.red(
+          `Error: Unknown section(s): ${unknownSections.join(", ")}. Valid values: header,summary,dashboard,footer`,
+        ),
+      );
+      process.exit(1);
+    }
+  }
+
+  clearScreen(true);
 
   // Handle graceful shutdown
   process.on("SIGINT", () => {
@@ -378,13 +612,11 @@ async function main() {
 
   if (!watchMode) {
     // Single run mode
-    await fetchAndDisplayQuotas(false);
+    await fetchAndDisplayQuotas(false, undefined, config);
   } else {
     // Watch mode - continuous polling
-    console.log(chalk.cyan(`🔄 Starting watch mode (updating every ${interval} minute${interval !== 1 ? 's' : ''})...\n`));
-
     // Initial fetch
-    await fetchAndDisplayQuotas(true, interval);
+    await fetchAndDisplayQuotas(true, interval, config);
 
     // Set up polling
     const intervalMs = interval * 60 * 1000;
@@ -394,32 +626,42 @@ async function main() {
 
       nextUpdateTime = new Date(Date.now() + intervalMs);
 
-      // Update countdown every second
-      const countdownInterval = setInterval(() => {
-        if (!isRunning) {
-          clearInterval(countdownInterval);
-          return;
-        }
+      let countdownInterval: NodeJS.Timeout | undefined;
 
-        // Move cursor up to update the footer
-        process.stdout.write("\x1b[2A"); // Move up 2 lines
-        process.stdout.write("\x1b[K"); // Clear line
+      if (config.showFooter) {
+        // Update countdown every second
+        countdownInterval = setInterval(() => {
+          if (!isRunning) {
+            if (countdownInterval) {
+              clearInterval(countdownInterval);
+            }
+            return;
+          }
 
-        const footerParts = [
-          chalk.gray("  Last updated: ") + chalk.white(new Date().toLocaleTimeString()),
-          chalk.gray("  Next update in: ") + chalk.cyan(getTimeUntilNextUpdate()),
-          chalk.gray("  Press Ctrl+C to exit")
-        ];
-        console.log(footerParts.join(chalk.gray(" • ")));
-        console.log();
-      }, 1000);
+          // Move cursor up to update the footer
+          process.stdout.write("\x1b[2A"); // Move up 2 lines
+          process.stdout.write("\x1b[K"); // Clear line
+
+          const footerParts = [
+            chalk.gray("  Last updated: ") + chalk.white(new Date().toLocaleTimeString()),
+            chalk.gray("  Next update in: ") + chalk.cyan(getTimeUntilNextUpdate()),
+            chalk.gray("  Press Ctrl+C to exit"),
+          ];
+
+          console.log(fitLineToWidth(footerParts.join(chalk.gray(" • ")), getRenderWidth(config.maxWidth)));
+          console.log();
+        }, 1000);
+      }
 
       // Wait for the interval, then fetch again
       await new Promise(resolve => setTimeout(resolve, intervalMs));
-      clearInterval(countdownInterval);
+
+      if (countdownInterval) {
+        clearInterval(countdownInterval);
+      }
 
       if (isRunning) {
-        await fetchAndDisplayQuotas(true, interval);
+        await fetchAndDisplayQuotas(true, interval, config);
         poll(); // Schedule next poll
       }
     };
@@ -432,4 +674,3 @@ main().catch((err) => {
   console.error("Error:", err);
   process.exit(1);
 });
-
