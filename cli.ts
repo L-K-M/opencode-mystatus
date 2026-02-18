@@ -68,6 +68,8 @@ const COPILOT_QUOTA_LINE_REGEX =
   /^(.+?)\s+([█░]+)\s+(\d+)%\s+\(\s*([^/)]+?)\s*\/\s*([^)]+?)\s*\)\s*$/;
 const COPILOT_UNLIMITED_LINE_REGEX = /^(.+?)\s+Unlimited\s*$/i;
 const COPILOT_RESET_LINE_REGEX = /^(Quota resets|配额重置)\s*[:：]\s*(.+)$/i;
+const USED_LINE_REGEX = /^\s*(Used:|已用[:：])/;
+const RESET_LINE_REGEX = /^\s*(Resets in:|Quota resets:|重置[:：])/;
 
 // ============================================================================
 // Utility Functions
@@ -418,6 +420,53 @@ function withDerivedZaiUsage(
   };
 }
 
+function inlineResetIntoUsedLine(content: string): string {
+  const lines = content.split("\n");
+
+  for (let i = 0; i < lines.length; i += 1) {
+    const currentTrimmed = lines[i].trim();
+    if (!USED_LINE_REGEX.test(currentTrimmed)) {
+      continue;
+    }
+
+    if (RESET_LINE_REGEX.test(currentTrimmed)) {
+      continue;
+    }
+
+    let nextLineIndex = i + 1;
+    while (nextLineIndex < lines.length && lines[nextLineIndex].trim() === "") {
+      nextLineIndex += 1;
+    }
+
+    if (nextLineIndex >= lines.length) {
+      continue;
+    }
+
+    const resetText = lines[nextLineIndex].trim();
+    if (!RESET_LINE_REGEX.test(resetText)) {
+      continue;
+    }
+
+    lines[i] = `${currentTrimmed} • ${resetText}`;
+    lines.splice(nextLineIndex, 1);
+  }
+
+  return lines.join("\n");
+}
+
+function withNormalizedZaiLayout(
+  result: QueryResult | null,
+): QueryResult | null {
+  if (!result || !result.success || !result.output) {
+    return result;
+  }
+
+  return {
+    ...result,
+    output: inlineResetIntoUsedLine(result.output),
+  };
+}
+
 function createTextProgressBar(percent: number, width: number = 30): string {
   const safePercent = Math.max(0, Math.min(100, percent));
   const filled = Math.round((safePercent / 100) * width);
@@ -764,7 +813,9 @@ async function fetchAndDisplayQuotas(
       fetchDerivedZaiTokenUsage(authData["zai-coding-plan"]),
     ]);
 
-  const zaiResult = withDerivedZaiUsage(rawZaiResult, zaiDerivedTokenUsage);
+  const zaiResult = withNormalizedZaiLayout(
+    withDerivedZaiUsage(rawZaiResult, zaiDerivedTokenUsage),
+  );
   const normalizedCopilotResult = withNormalizedCopilotLayout(copilotResult);
 
   // 3. Collect results
