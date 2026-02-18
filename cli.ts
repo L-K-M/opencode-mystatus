@@ -64,6 +64,11 @@ const ZAI_TOTAL_FIELDS = [
   "total_value",
 ];
 
+const COPILOT_QUOTA_LINE_REGEX =
+  /^(.+?)\s+([█░]+)\s+(\d+)%\s+\(\s*([^/)]+?)\s*\/\s*([^)]+?)\s*\)\s*$/;
+const COPILOT_UNLIMITED_LINE_REGEX = /^(.+?)\s+Unlimited\s*$/i;
+const COPILOT_RESET_LINE_REGEX = /^(Quota resets|配额重置)\s*[:：]\s*(.+)$/i;
+
 // ============================================================================
 // Utility Functions
 // ============================================================================
@@ -413,6 +418,122 @@ function withDerivedZaiUsage(
   };
 }
 
+function createTextProgressBar(percent: number, width: number = 30): string {
+  const safePercent = Math.max(0, Math.min(100, percent));
+  const filled = Math.round((safePercent / 100) * width);
+  const empty = width - filled;
+  return "█".repeat(filled) + "░".repeat(empty);
+}
+
+function normalizeCopilotContent(content: string): string {
+  const lines = content.split("\n");
+
+  let resetLineIndex = -1;
+  let resetCountdown: string | null = null;
+
+  for (let i = 0; i < lines.length; i += 1) {
+    const resetMatch = lines[i].trim().match(COPILOT_RESET_LINE_REGEX);
+    if (!resetMatch) {
+      continue;
+    }
+
+    resetLineIndex = i;
+    const countdownWithDate = resetMatch[2].trim();
+    resetCountdown = countdownWithDate.split(" (")[0].trim();
+    break;
+  }
+
+  const normalized: string[] = [];
+  let resetInlineAdded = false;
+  let previousWasQuotaBlock = false;
+
+  for (let i = 0; i < lines.length; i += 1) {
+    if (i === resetLineIndex) {
+      continue;
+    }
+
+    const originalLine = lines[i];
+    const trimmed = originalLine.trim();
+
+    const quotaMatch = trimmed.match(COPILOT_QUOTA_LINE_REGEX);
+    if (quotaMatch) {
+      const label = quotaMatch[1].trim();
+      const percent = parseInt(quotaMatch[3], 10);
+      const used = quotaMatch[4].trim();
+      const total = quotaMatch[5].trim();
+
+      if (previousWasQuotaBlock && normalized[normalized.length - 1] !== "") {
+        normalized.push("");
+      }
+
+      const bar = createTextProgressBar(percent, 30);
+      let usedLine = `Used: ${used} / ${total}`;
+      if (resetCountdown && !resetInlineAdded) {
+        usedLine += ` • Resets in: ${resetCountdown}`;
+        resetInlineAdded = true;
+      }
+
+      normalized.push(label);
+      normalized.push(`${bar} ${percent}% remaining`);
+      normalized.push(usedLine);
+      previousWasQuotaBlock = true;
+      continue;
+    }
+
+    const unlimitedMatch = trimmed.match(COPILOT_UNLIMITED_LINE_REGEX);
+    if (unlimitedMatch) {
+      const label = unlimitedMatch[1].trim();
+
+      if (previousWasQuotaBlock && normalized[normalized.length - 1] !== "") {
+        normalized.push("");
+      }
+
+      normalized.push(label);
+      normalized.push("Unlimited");
+      previousWasQuotaBlock = true;
+      continue;
+    }
+
+    normalized.push(originalLine);
+    previousWasQuotaBlock = false;
+  }
+
+  const compacted: string[] = [];
+  for (const line of normalized) {
+    const isBlank = line.trim() === "";
+    const previousBlank =
+      compacted.length > 0 && compacted[compacted.length - 1].trim() === "";
+
+    if (isBlank && (compacted.length === 0 || previousBlank)) {
+      continue;
+    }
+
+    compacted.push(line);
+  }
+
+  while (
+    compacted.length > 0 &&
+    compacted[compacted.length - 1].trim() === ""
+  ) {
+    compacted.pop();
+  }
+
+  return compacted.join("\n");
+}
+
+function withNormalizedCopilotLayout(
+  result: QueryResult | null,
+): QueryResult | null {
+  if (!result || !result.success || !result.output) {
+    return result;
+  }
+
+  return {
+    ...result,
+    output: normalizeCopilotContent(result.output),
+  };
+}
+
 // ============================================================================
 // Dashboard Styling Functions
 // ============================================================================
@@ -514,20 +635,30 @@ function formatOutputContent(content: string, width: number): string {
       line = "  " + chalk.cyan.bold("Account:") + chalk.white(parts[1]);
     }
     // Color limit/quota headers (bold magenta)
-    else if (trimmed.includes("limit") || trimmed.includes("quota")) {
+    else if (
+      trimmed.includes("limit") ||
+      trimmed.includes("quota") ||
+      /^(Premium|Chat|Completions)$/i.test(trimmed)
+    ) {
       line = "  " + chalk.magenta.bold(trimmed);
     }
     // Color progress bars
     else if (line.includes("█") || line.includes("░")) {
       line = "  " + formatProgressBar(line.trim());
     }
-    // Color reset time
-    else if (trimmed.includes("Resets in:") || trimmed.includes("Quota resets:")) {
-      line = "  " + trimmed.replace(/(Resets in:|Quota resets:)/, chalk.blue.bold("$1"));
-    }
     // Color "Used:" lines
-    else if (trimmed.includes("Used:")) {
-      line = "  " + trimmed.replace(/Used:/, chalk.yellow("Used:"));
+    else if (trimmed.includes("Used:") || trimmed.includes("已用")) {
+      let styled = trimmed.replace(/Used:/, chalk.yellow("Used:"));
+      styled = styled.replace(/已用[:：]/, match => chalk.yellow(match));
+      styled = styled.replace(
+        /(Resets in:|Quota resets:|重置[:：])/,
+        chalk.blue.bold("$1"),
+      );
+      line = "  " + styled;
+    }
+    // Color reset time
+    else if (trimmed.includes("Resets in:") || trimmed.includes("Quota resets:") || trimmed.includes("重置")) {
+      line = "  " + trimmed.replace(/(Resets in:|Quota resets:|重置[:：])/, chalk.blue.bold("$1"));
     }
     // Color warnings
     else if (trimmed.includes("⚠️")) {
@@ -634,6 +765,7 @@ async function fetchAndDisplayQuotas(
     ]);
 
   const zaiResult = withDerivedZaiUsage(rawZaiResult, zaiDerivedTokenUsage);
+  const normalizedCopilotResult = withNormalizedCopilotLayout(copilotResult);
 
   // 3. Collect results
   const results: Array<{ title: string; icon: string; content: string }> = [];
@@ -643,7 +775,7 @@ async function fetchAndDisplayQuotas(
   collectResult(zhipuResult, "Zhipu AI Account Quota", "🧠", results, errors);
   collectResult(zaiResult, "Z.ai Account Quota", "⚡", results, errors);
   collectResult(googleResult, "Google Cloud Account Quota", "☁️", results, errors);
-  collectResult(copilotResult, "GitHub Copilot Account Quota", "🚀", results, errors);
+  collectResult(normalizedCopilotResult, "GitHub Copilot Account Quota", "🚀", results, errors);
 
   // 4. Output results
   if (results.length === 0 && errors.length === 0) {
