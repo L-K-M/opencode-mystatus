@@ -37,12 +37,12 @@ npm run mystatus -- --watch --interval 10
 
 Examples:
 - `npm run mystatus -- --show dashboard,summary,footer`
-- `npm run mystatus -- --show summary`
+- `npm run mystatus -- --watch --show summary`
 
 **Watch Mode Features:**
 - 🔄 Automatically refreshes quota data at specified intervals
 - ⏱️ Shows live countdown to next update
-- 📊 Beautiful dashboard with color-coded health indicators
+- 📊 Dashboard with color-coded health indicators
 - 🎯 Press Ctrl+C to exit gracefully
 
 Or if you prefer using Bun:

@@ -45,6 +45,25 @@ interface ZaiDerivedTokenUsage {
   total: number;
 }
 
+const ZAI_USED_FIELDS = [
+  "currentValue",
+  "current_value",
+  "used",
+  "usedValue",
+  "used_value",
+];
+
+const ZAI_TOTAL_FIELDS = [
+  "usage",
+  "total",
+  "limit",
+  "quota",
+  "max",
+  "entitlement",
+  "totalValue",
+  "total_value",
+];
+
 // ============================================================================
 // Utility Functions
 // ============================================================================
@@ -213,6 +232,24 @@ function parseNumericValue(value: unknown): number | null {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
+function pickFirstNumericValue(
+  record: Record<string, unknown>,
+  keys: readonly string[],
+): number | null {
+  for (const key of keys) {
+    if (!Object.prototype.hasOwnProperty.call(record, key)) {
+      continue;
+    }
+
+    const parsed = parseNumericValue(record[key]);
+    if (parsed !== null) {
+      return parsed;
+    }
+  }
+
+  return null;
+}
+
 async function fetchDerivedZaiTokenUsage(
   zaiAuth: AuthData["zai-coding-plan"],
 ): Promise<ZaiDerivedTokenUsage | null> {
@@ -263,22 +300,29 @@ async function fetchDerivedZaiTokenUsage(
       return null;
     }
 
-    const totalLimit = parseNumericValue(tokensLimit.number);
-    const usedPercent = parseNumericValue(tokensLimit.percentage);
-    if (totalLimit === null || usedPercent === null) {
-      return null;
+    const explicitUsed = pickFirstNumericValue(tokensLimit, ZAI_USED_FIELDS);
+    const explicitTotal = pickFirstNumericValue(tokensLimit, ZAI_TOTAL_FIELDS);
+
+    if (
+      explicitUsed !== null &&
+      explicitTotal !== null &&
+      Number.isFinite(explicitTotal) &&
+      explicitTotal > 0
+    ) {
+      return {
+        used: Math.max(0, Math.min(Math.round(explicitUsed), Math.round(explicitTotal))),
+        total: Math.round(explicitTotal),
+      };
     }
 
-    const roundedTotal = Math.round(totalLimit);
-    if (!Number.isFinite(roundedTotal) || roundedTotal <= 0) {
+    const usedPercent = parseNumericValue(tokensLimit.percentage);
+    if (usedPercent === null) {
       return null;
     }
 
     const safePercent = Math.max(0, Math.min(100, usedPercent));
-    const roundedUsed = Math.max(
-      0,
-      Math.min(roundedTotal, Math.round((roundedTotal * safePercent) / 100)),
-    );
+    const roundedTotal = 100;
+    const roundedUsed = Math.round(safePercent);
 
     return {
       used: roundedUsed,
