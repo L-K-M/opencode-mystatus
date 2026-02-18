@@ -10,7 +10,11 @@ import { join } from "path";
 import chalk from "chalk";
 import { program } from "commander";
 
-import { type AuthData, type QueryResult } from "./plugin/lib/types";
+import {
+  REQUEST_TIMEOUT_MS,
+  type AuthData,
+  type QueryResult,
+} from "./plugin/lib/types";
 import { queryOpenAIUsage } from "./plugin/lib/openai";
 import { queryZaiUsage, queryZhipuUsage } from "./plugin/lib/zhipu";
 import { queryGoogleUsage } from "./plugin/lib/google";
@@ -34,6 +38,12 @@ interface DashboardConfig {
 const DEFAULT_WIDTH = 80;
 const MIN_WIDTH = 20;
 const ANSI_ESCAPE = "\u001b";
+const ZAI_QUOTA_QUERY_URL = "https://api.z.ai/api/monitor/usage/quota/limit";
+
+interface ZaiDerivedTokenUsage {
+  used: number;
+  total: number;
+}
 
 // ============================================================================
 // Utility Functions
@@ -168,6 +178,195 @@ function centerText(text: string, width: number): string {
   const rightPadding = totalPadding - leftPadding;
 
   return " ".repeat(leftPadding) + displayText + " ".repeat(rightPadding);
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
+function parseNumericValue(value: unknown): number | null {
+  if (typeof value === "number") {
+    return Number.isFinite(value) ? value : null;
+  }
+
+  if (typeof value !== "string") {
+    return null;
+  }
+
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return null;
+  }
+
+  const normalized = trimmed.replace(/,/g, "");
+  const direct = Number(normalized);
+  if (Number.isFinite(direct)) {
+    return direct;
+  }
+
+  const leadingNumberMatch = normalized.match(/^-?\d+(?:\.\d+)?/);
+  if (!leadingNumberMatch) {
+    return null;
+  }
+
+  const parsed = Number(leadingNumberMatch[0]);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+async function fetchDerivedZaiTokenUsage(
+  zaiAuth: AuthData["zai-coding-plan"],
+): Promise<ZaiDerivedTokenUsage | null> {
+  if (!zaiAuth || zaiAuth.type !== "api" || !zaiAuth.key) {
+    return null;
+  }
+
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+
+  try {
+    const response = await fetch(ZAI_QUOTA_QUERY_URL, {
+      method: "GET",
+      headers: {
+        Authorization: zaiAuth.key,
+        "Content-Type": "application/json",
+        "User-Agent": "OpenCode-Status-Plugin/1.0",
+      },
+      signal: controller.signal,
+    });
+
+    if (!response.ok) {
+      return null;
+    }
+
+    const payload = (await response.json()) as unknown;
+    if (!isRecord(payload)) {
+      return null;
+    }
+
+    const isSuccess = payload.success === true;
+    const responseCode = parseNumericValue(payload.code);
+    if (!isSuccess || responseCode !== 200) {
+      return null;
+    }
+
+    const data = payload.data;
+    if (!isRecord(data) || !Array.isArray(data.limits)) {
+      return null;
+    }
+
+    const tokensLimit = data.limits.find(
+      (item): item is Record<string, unknown> =>
+        isRecord(item) && item.type === "TOKENS_LIMIT",
+    );
+
+    if (!tokensLimit) {
+      return null;
+    }
+
+    const totalLimit = parseNumericValue(tokensLimit.number);
+    const usedPercent = parseNumericValue(tokensLimit.percentage);
+    if (totalLimit === null || usedPercent === null) {
+      return null;
+    }
+
+    const roundedTotal = Math.round(totalLimit);
+    if (!Number.isFinite(roundedTotal) || roundedTotal <= 0) {
+      return null;
+    }
+
+    const safePercent = Math.max(0, Math.min(100, usedPercent));
+    const roundedUsed = Math.max(
+      0,
+      Math.min(roundedTotal, Math.round((roundedTotal * safePercent) / 100)),
+    );
+
+    return {
+      used: roundedUsed,
+      total: roundedTotal,
+    };
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+
+function injectDerivedZaiUsage(
+  content: string,
+  usage: ZaiDerivedTokenUsage | null,
+): string {
+  if (!usage) {
+    return content;
+  }
+
+  const lines = content.split("\n");
+  const tokenLimitHeaderRegex = /(token limit|Token 限额)/i;
+  const mcpHeaderRegex = /(MCP monthly quota|MCP 月度配额)/i;
+  const usedLineRegex = /^\s*(Used:|已用[:：])/;
+
+  const tokenSectionIndex = lines.findIndex((line) =>
+    tokenLimitHeaderRegex.test(line),
+  );
+  if (tokenSectionIndex === -1) {
+    return content;
+  }
+
+  let usedLineIndex = -1;
+  for (let i = tokenSectionIndex + 1; i < lines.length; i += 1) {
+    const trimmed = lines[i].trim();
+
+    if (!trimmed) {
+      if (i > tokenSectionIndex + 1) {
+        break;
+      }
+      continue;
+    }
+
+    if (mcpHeaderRegex.test(trimmed)) {
+      break;
+    }
+
+    if (usedLineRegex.test(trimmed)) {
+      usedLineIndex = i;
+      break;
+    }
+  }
+
+  if (usedLineIndex !== -1 && !/NaN|N\/A/i.test(lines[usedLineIndex])) {
+    return content;
+  }
+
+  const indentSource =
+    usedLineIndex !== -1
+      ? lines[usedLineIndex]
+      : (lines[Math.min(tokenSectionIndex + 1, lines.length - 1)] ?? "");
+  const indentMatch = indentSource.match(/^\s*/);
+  const indent = indentMatch ? indentMatch[0] : "  ";
+  const usedLabel = content.includes("已用") ? "已用:" : "Used:";
+  const derivedLine = `${indent}${usedLabel} ${usage.used} / ${usage.total}`;
+
+  if (usedLineIndex !== -1) {
+    lines[usedLineIndex] = derivedLine;
+  } else {
+    const insertIndex = Math.min(tokenSectionIndex + 2, lines.length);
+    lines.splice(insertIndex, 0, derivedLine);
+  }
+
+  return lines.join("\n");
+}
+
+function withDerivedZaiUsage(
+  result: QueryResult | null,
+  usage: ZaiDerivedTokenUsage | null,
+): QueryResult | null {
+  if (!result || !result.success || !result.output || !usage) {
+    return result;
+  }
+
+  return {
+    ...result,
+    output: injectDerivedZaiUsage(result.output, usage),
+  };
 }
 
 // ============================================================================
@@ -336,7 +535,8 @@ async function fetchAndDisplayQuotas(
   const renderWidth = getRenderWidth(config.maxWidth);
 
   if (watchMode) {
-    clearScreen();
+    // In watch mode, fully clear before each redraw to avoid visual overlap.
+    clearScreen(true);
   }
 
   if (config.showHeader) {
@@ -372,14 +572,24 @@ async function fetchAndDisplayQuotas(
   console.log(fitLineToWidth(chalk.gray("⟳ Querying all platforms..."), renderWidth));
   console.log();
 
-  const [openaiResult, zhipuResult, zaiResult, googleResult, copilotResult] =
+  const [
+    openaiResult,
+    zhipuResult,
+    rawZaiResult,
+    googleResult,
+    copilotResult,
+    zaiDerivedTokenUsage,
+  ] =
     await Promise.all([
       queryOpenAIUsage(authData.openai),
       queryZhipuUsage(authData["zhipuai-coding-plan"]),
       queryZaiUsage(authData["zai-coding-plan"]),
       queryGoogleUsage(),
       queryCopilotUsage(authData["github-copilot"]),
+      fetchDerivedZaiTokenUsage(authData["zai-coding-plan"]),
     ]);
+
+  const zaiResult = withDerivedZaiUsage(rawZaiResult, zaiDerivedTokenUsage);
 
   // 3. Collect results
   const results: Array<{ title: string; icon: string; content: string }> = [];
