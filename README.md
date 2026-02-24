@@ -30,16 +30,20 @@ npm run mystatus -- --watch --interval 10
 ```
 
 **Command Line Options:**
+
 - `-w, --watch` - Enable watch mode for continuous monitoring
 - `-i, --interval <minutes>` - Set polling interval in minutes (default: 5)
-- `--show <sections>` - Show only selected sections (`header,summary,dashboard,footer`)
+- `--show <sections>` - Show only selected sections (`header,summary,dashboard,dashboard-compact,footer`)
 - `--width <columns>` - Set max dashboard width (auto-detected by default)
 
 Examples:
+
 - `npm run mystatus -- --show dashboard,summary,footer`
+- `npm run mystatus -- --show header,summary,dashboard-compact,footer`
 - `npm run mystatus -- --watch --show summary`
 
 **Watch Mode Features:**
+
 - 🔄 Automatically refreshes quota data at specified intervals
 - ⏱️ Shows live countdown to next update
 - 📊 Dashboard with color-coded health indicators

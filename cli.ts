@@ -31,6 +31,7 @@ interface DashboardConfig {
   showHeader: boolean;
   showSummary: boolean;
   showAccountQuota: boolean;
+  compactDashboard: boolean;
   showFooter: boolean;
   maxWidth?: number;
 }
@@ -96,7 +97,10 @@ function getTimeUntilNextUpdate(): string {
   if (!nextUpdateTime) return "";
 
   const now = new Date();
-  const diff = Math.max(0, Math.floor((nextUpdateTime.getTime() - now.getTime()) / 1000));
+  const diff = Math.max(
+    0,
+    Math.floor((nextUpdateTime.getTime() - now.getTime()) / 1000),
+  );
 
   const minutes = Math.floor(diff / 60);
   const seconds = diff % 60;
@@ -108,7 +112,10 @@ function getTimeUntilNextUpdate(): string {
 }
 
 function getTerminalWidth(): number {
-  if (typeof process.stdout.columns === "number" && process.stdout.columns > 0) {
+  if (
+    typeof process.stdout.columns === "number" &&
+    process.stdout.columns > 0
+  ) {
     return process.stdout.columns;
   }
 
@@ -317,7 +324,10 @@ async function fetchDerivedZaiTokenUsage(
       explicitTotal > 0
     ) {
       return {
-        used: Math.max(0, Math.min(Math.round(explicitUsed), Math.round(explicitTotal))),
+        used: Math.max(
+          0,
+          Math.min(Math.round(explicitUsed), Math.round(explicitTotal)),
+        ),
         total: Math.round(explicitTotal),
       };
     }
@@ -587,7 +597,11 @@ function withNormalizedCopilotLayout(
 // Dashboard Styling Functions
 // ============================================================================
 
-function createDashboardHeader(width: number, watchMode: boolean = false, interval?: number) {
+function createDashboardHeader(
+  width: number,
+  watchMode: boolean = false,
+  interval?: number,
+) {
   const safeWidth = Math.max(4, width);
   const contentWidth = safeWidth - 2;
   const title = "AI ACCOUNT QUOTA DASHBOARD";
@@ -604,20 +618,20 @@ function createDashboardHeader(width: number, watchMode: boolean = false, interv
   console.log(
     chalk.bold.cyan("│") +
       chalk.bold.white(centerText(title, contentWidth)) +
-      chalk.bold.cyan("│")
+      chalk.bold.cyan("│"),
   );
   console.log(
     chalk.bold.cyan("│") +
       chalk.gray(centerText(date, contentWidth)) +
-      chalk.bold.cyan("│")
+      chalk.bold.cyan("│"),
   );
 
   if (watchMode && interval) {
-    const modeText = `🔄 Watch Mode • Updating every ${interval} minute${interval !== 1 ? 's' : ''}`;
+    const modeText = `🔄 Watch Mode • Updating every ${interval} minute${interval !== 1 ? "s" : ""}`;
     console.log(
       chalk.bold.cyan("│") +
         chalk.yellow(centerText(modeText, contentWidth)) +
-        chalk.bold.cyan("│")
+        chalk.bold.cyan("│"),
     );
   }
 
@@ -655,11 +669,20 @@ function formatProgressBar(text: string): string {
 
   // Color the percentage
   if (percent >= 70) {
-    colored = colored.replace(/(\d+)% remaining/, chalk.green.bold("$1%") + chalk.white(" remaining"));
+    colored = colored.replace(
+      /(\d+)% remaining/,
+      chalk.green.bold("$1%") + chalk.white(" remaining"),
+    );
   } else if (percent >= 40) {
-    colored = colored.replace(/(\d+)% remaining/, chalk.yellow.bold("$1%") + chalk.white(" remaining"));
+    colored = colored.replace(
+      /(\d+)% remaining/,
+      chalk.yellow.bold("$1%") + chalk.white(" remaining"),
+    );
   } else {
-    colored = colored.replace(/(\d+)% remaining/, chalk.red.bold("$1%") + chalk.white(" remaining"));
+    colored = colored.replace(
+      /(\d+)% remaining/,
+      chalk.red.bold("$1%") + chalk.white(" remaining"),
+    );
   }
 
   return colored;
@@ -698,7 +721,7 @@ function formatOutputContent(content: string, width: number): string {
     // Color "Used:" lines
     else if (trimmed.includes("Used:") || trimmed.includes("已用")) {
       let styled = trimmed.replace(/Used:/, chalk.yellow("Used:"));
-      styled = styled.replace(/已用[:：]/, match => chalk.yellow(match));
+      styled = styled.replace(/已用[:：]/, (match) => chalk.yellow(match));
       styled = styled.replace(
         /(Resets in:|Quota resets:|重置[:：])/,
         chalk.blue.bold("$1"),
@@ -706,8 +729,17 @@ function formatOutputContent(content: string, width: number): string {
       line = "  " + styled;
     }
     // Color reset time
-    else if (trimmed.includes("Resets in:") || trimmed.includes("Quota resets:") || trimmed.includes("重置")) {
-      line = "  " + trimmed.replace(/(Resets in:|Quota resets:|重置[:：])/, chalk.blue.bold("$1"));
+    else if (
+      trimmed.includes("Resets in:") ||
+      trimmed.includes("Quota resets:") ||
+      trimmed.includes("重置")
+    ) {
+      line =
+        "  " +
+        trimmed.replace(
+          /(Resets in:|Quota resets:|重置[:：])/,
+          chalk.blue.bold("$1"),
+        );
     }
     // Color warnings
     else if (trimmed.includes("⚠️")) {
@@ -715,6 +747,64 @@ function formatOutputContent(content: string, width: number): string {
     }
     // Regular lines with indentation
     else {
+      line = "  " + chalk.gray(trimmed);
+    }
+
+    formatted.push(fitLineToWidth(line, width));
+  }
+
+  return formatted.join("\n");
+}
+
+function formatOutputContentCompact(content: string, width: number): string {
+  const lines = content.split("\n");
+  const formatted: string[] = [];
+
+  for (let line of lines) {
+    const trimmed = line.trim();
+
+    if (!trimmed) {
+      continue;
+    }
+
+    if (line.startsWith("Account:")) {
+      const parts = line.split(":");
+      line = "  " + chalk.cyan.bold("Account:") + chalk.white(parts[1]);
+    } else if (
+      trimmed.includes("limit") ||
+      trimmed.includes("quota") ||
+      /^(Premium|Chat|Completions)$/i.test(trimmed)
+    ) {
+      line = "  " + chalk.magenta.bold(trimmed);
+    } else if (line.includes("█") || line.includes("░")) {
+      line = "  " + formatProgressBar(line.trim());
+    } else if (trimmed.includes("Used:") || trimmed.includes("已用")) {
+      const resetMatch = trimmed.match(
+        /(Resets in:|Quota resets:|重置[:：]).*$/,
+      );
+      if (!resetMatch) {
+        continue;
+      }
+      line =
+        "  " +
+        resetMatch[0].replace(
+          /(Resets in:|Quota resets:|重置[:：])/,
+          chalk.blue.bold("$1"),
+        );
+    } else if (
+      trimmed.includes("Resets in:") ||
+      trimmed.includes("Quota resets:") ||
+      trimmed.includes("重置")
+    ) {
+      line =
+        "  " +
+        trimmed.replace(
+          /(Resets in:|Quota resets:|重置[:：])/,
+          chalk.blue.bold("$1"),
+        );
+    } else if (trimmed.includes("⚠️")) {
+      line = "  " + chalk.yellow(trimmed);
+    } else {
       line = "  " + chalk.gray(trimmed);
     }
 
@@ -739,7 +829,10 @@ function collectResult(
   } else if (!result.success && result.error) {
     // Silently ignore "file not found" errors (ENOENT) - these indicate unconfigured services
     // This matches the behavior where null results are silently ignored
-    if (result.error.includes("ENOENT") || result.error.includes("no such file")) {
+    if (
+      result.error.includes("ENOENT") ||
+      result.error.includes("no such file")
+    ) {
       return;
     }
     errors.push(result.error);
@@ -753,6 +846,7 @@ async function fetchAndDisplayQuotas(
     showHeader: true,
     showSummary: true,
     showAccountQuota: true,
+    compactDashboard: false,
     showFooter: true,
   },
   backgroundRefresh: boolean = false,
@@ -803,7 +897,9 @@ async function fetchAndDisplayQuotas(
 
   // 2. Query all platforms in parallel
   if (!deferRedrawUntilDataReady) {
-    console.log(fitLineToWidth(chalk.gray("⟳ Querying all platforms..."), renderWidth));
+    console.log(
+      fitLineToWidth(chalk.gray("⟳ Querying all platforms..."), renderWidth),
+    );
     console.log();
   }
 
@@ -814,15 +910,14 @@ async function fetchAndDisplayQuotas(
     googleResult,
     copilotResult,
     zaiDerivedTokenUsage,
-  ] =
-    await Promise.all([
-      queryOpenAIUsage(authData.openai),
-      queryZhipuUsage(authData["zhipuai-coding-plan"]),
-      queryZaiUsage(authData["zai-coding-plan"]),
-      queryGoogleUsage(),
-      queryCopilotUsage(authData["github-copilot"]),
-      fetchDerivedZaiTokenUsage(authData["zai-coding-plan"]),
-    ]);
+  ] = await Promise.all([
+    queryOpenAIUsage(authData.openai),
+    queryZhipuUsage(authData["zhipuai-coding-plan"]),
+    queryZaiUsage(authData["zai-coding-plan"]),
+    queryGoogleUsage(),
+    queryCopilotUsage(authData["github-copilot"]),
+    fetchDerivedZaiTokenUsage(authData["zai-coding-plan"]),
+  ]);
 
   const zaiResult = withNormalizedZaiLayout(
     withDerivedZaiUsage(rawZaiResult, zaiDerivedTokenUsage),
@@ -843,19 +938,49 @@ async function fetchAndDisplayQuotas(
   collectResult(openaiResult, "OpenAI Account Quota", "🤖", results, errors);
   collectResult(zhipuResult, "Zhipu AI Account Quota", "🧠", results, errors);
   collectResult(zaiResult, "Z.ai Account Quota", "⚡", results, errors);
-  collectResult(googleResult, "Google Cloud Account Quota", "☁️", results, errors);
-  collectResult(normalizedCopilotResult, "GitHub Copilot Account Quota", "🚀", results, errors);
+  collectResult(
+    googleResult,
+    "Google Cloud Account Quota",
+    "☁️",
+    results,
+    errors,
+  );
+  collectResult(
+    normalizedCopilotResult,
+    "GitHub Copilot Account Quota",
+    "🚀",
+    results,
+    errors,
+  );
 
   // 4. Output results
   if (results.length === 0 && errors.length === 0) {
     console.log();
-    console.log(fitLineToWidth(chalk.yellow.bold("⚠️  No configured accounts found"), renderWidth));
+    console.log(
+      fitLineToWidth(
+        chalk.yellow.bold("⚠️  No configured accounts found"),
+        renderWidth,
+      ),
+    );
     console.log();
-    console.log(fitLineToWidth(chalk.gray("Supported platforms:"), renderWidth));
-    console.log(fitLineToWidth(chalk.gray("  • OpenAI (Plus/Team/Pro subscriptions)"), renderWidth));
-    console.log(fitLineToWidth(chalk.gray("  • Zhipu AI (Coding Plan)"), renderWidth));
-    console.log(fitLineToWidth(chalk.gray("  • Z.ai (Coding Plan)"), renderWidth));
-    console.log(fitLineToWidth(chalk.gray("  • Google Cloud (Antigravity)"), renderWidth));
+    console.log(
+      fitLineToWidth(chalk.gray("Supported platforms:"), renderWidth),
+    );
+    console.log(
+      fitLineToWidth(
+        chalk.gray("  • OpenAI (Plus/Team/Pro subscriptions)"),
+        renderWidth,
+      ),
+    );
+    console.log(
+      fitLineToWidth(chalk.gray("  • Zhipu AI (Coding Plan)"), renderWidth),
+    );
+    console.log(
+      fitLineToWidth(chalk.gray("  • Z.ai (Coding Plan)"), renderWidth),
+    );
+    console.log(
+      fitLineToWidth(chalk.gray("  • Google Cloud (Antigravity)"), renderWidth),
+    );
     console.log(fitLineToWidth(chalk.gray("  • GitHub Copilot"), renderWidth));
 
     if (!watchMode) {
@@ -867,7 +992,12 @@ async function fetchAndDisplayQuotas(
   if (config.showSummary) {
     console.log(fitLineToWidth(chalk.bold.white("📊 Summary"), renderWidth));
     console.log();
-    console.log(fitLineToWidth(chalk.gray("  Active platforms: ") + chalk.green.bold(results.length), renderWidth));
+    console.log(
+      fitLineToWidth(
+        chalk.gray("  Active platforms: ") + chalk.green.bold(results.length),
+        renderWidth,
+      ),
+    );
 
     for (const result of results) {
       // Extract all percentages from content
@@ -875,7 +1005,9 @@ async function fetchAndDisplayQuotas(
       let lowestPercent: number | null = null;
 
       if (percentMatches) {
-        const percents = percentMatches.map(m => parseInt(m.replace("%", "")));
+        const percents = percentMatches.map((m) =>
+          parseInt(m.replace("%", "")),
+        );
         lowestPercent = Math.min(...percents);
       }
 
@@ -901,9 +1033,14 @@ async function fetchAndDisplayQuotas(
 
       console.log(
         fitLineToWidth(
-          "  " + statusColor(statusIcon) + " " +
-            chalk.white(result.icon + " " + result.title.replace(" Account Quota", "")) +
-            " " + statusText,
+          "  " +
+            statusColor(statusIcon) +
+            " " +
+            chalk.white(
+              result.icon + " " + result.title.replace(" Account Quota", ""),
+            ) +
+            " " +
+            statusText,
           renderWidth,
         ),
       );
@@ -916,14 +1053,20 @@ async function fetchAndDisplayQuotas(
   if (config.showAccountQuota) {
     for (const result of results) {
       createSectionBox(result.title, result.icon, renderWidth);
-      console.log(formatOutputContent(result.content, renderWidth));
+      if (config.compactDashboard) {
+        console.log(formatOutputContentCompact(result.content, renderWidth));
+      } else {
+        console.log(formatOutputContent(result.content, renderWidth));
+      }
     }
   }
 
   // Display errors if any
   if (errors.length > 0) {
     console.log();
-    console.log(fitLineToWidth(chalk.red.bold("❌ Errors occurred:"), renderWidth));
+    console.log(
+      fitLineToWidth(chalk.red.bold("❌ Errors occurred:"), renderWidth),
+    );
     console.log(chalk.gray("─".repeat(renderWidth)));
 
     for (const error of errors) {
@@ -937,7 +1080,8 @@ async function fetchAndDisplayQuotas(
     console.log(chalk.gray("─".repeat(renderWidth)));
 
     const footerParts = [
-      chalk.gray("  Last updated: ") + chalk.white(new Date().toLocaleTimeString()),
+      chalk.gray("  Last updated: ") +
+        chalk.white(new Date().toLocaleTimeString()),
     ];
 
     if (watchMode && nextUpdateTime) {
@@ -950,7 +1094,9 @@ async function fetchAndDisplayQuotas(
       footerParts.push(chalk.gray("  Press Ctrl+C to exit"));
     }
 
-    console.log(fitLineToWidth(footerParts.join(chalk.gray(" • ")), renderWidth));
+    console.log(
+      fitLineToWidth(footerParts.join(chalk.gray(" • ")), renderWidth),
+    );
     console.log();
   }
 
@@ -966,12 +1112,19 @@ async function main() {
     .name("mystatus")
     .description("Monitor AI account quotas in a beautiful dashboard")
     .option("-w, --watch", "Watch mode: continuously poll and update", false)
-    .option("-i, --interval <minutes>", "Polling interval in minutes (default: 5)", "5")
+    .option(
+      "-i, --interval <minutes>",
+      "Polling interval in minutes (default: 5)",
+      "5",
+    )
     .option(
       "--show <sections>",
-      "Comma-separated sections to show: header,summary,dashboard,footer",
+      "Comma-separated sections to show: header,summary,dashboard,dashboard-compact,footer",
     )
-    .option("--width <columns>", "Set max dashboard width (default: auto-detect terminal width)")
+    .option(
+      "--width <columns>",
+      "Set max dashboard width (default: auto-detect terminal width)",
+    )
     .parse();
 
   const options = program.opts<{
@@ -1002,6 +1155,7 @@ async function main() {
     showHeader: true,
     showSummary: true,
     showAccountQuota: true,
+    compactDashboard: false,
     showFooter: true,
     maxWidth,
   };
@@ -1009,11 +1163,13 @@ async function main() {
   if (typeof options.show === "string") {
     const sections = options.show
       .split(",")
-      .map(section => section.trim().toLowerCase())
-      .filter(section => section.length > 0);
+      .map((section) => section.trim().toLowerCase())
+      .filter((section) => section.length > 0);
 
     if (sections.length === 0) {
-      console.error(chalk.red("Error: --show must include at least one section"));
+      console.error(
+        chalk.red("Error: --show must include at least one section"),
+      );
       process.exit(1);
     }
 
@@ -1023,6 +1179,7 @@ async function main() {
     config.showFooter = false;
 
     const unknownSections: string[] = [];
+    let compactDashboardRequested = false;
 
     for (const section of sections) {
       switch (section) {
@@ -1037,6 +1194,12 @@ async function main() {
         case "accountquota":
           config.showAccountQuota = true;
           break;
+        case "dashboard-compact":
+        case "compact-dashboard":
+        case "account-quota-compact":
+          config.showAccountQuota = true;
+          compactDashboardRequested = true;
+          break;
         case "footer":
           config.showFooter = true;
           break;
@@ -1046,10 +1209,12 @@ async function main() {
       }
     }
 
+    config.compactDashboard = compactDashboardRequested;
+
     if (unknownSections.length > 0) {
       console.error(
         chalk.red(
-          `Error: Unknown section(s): ${unknownSections.join(", ")}. Valid values: header,summary,dashboard,footer`,
+          `Error: Unknown section(s): ${unknownSections.join(", ")}. Valid values: header,summary,dashboard,dashboard-compact,footer`,
         ),
       );
       process.exit(1);
@@ -1098,18 +1263,25 @@ async function main() {
           process.stdout.write("\x1b[K"); // Clear line
 
           const footerParts = [
-            chalk.gray("  Last updated: ") + chalk.white(new Date().toLocaleTimeString()),
-            chalk.gray("  Next update in: ") + chalk.cyan(getTimeUntilNextUpdate()),
+            chalk.gray("  Last updated: ") +
+              chalk.white(new Date().toLocaleTimeString()),
+            chalk.gray("  Next update in: ") +
+              chalk.cyan(getTimeUntilNextUpdate()),
             chalk.gray("  Press Ctrl+C to exit"),
           ];
 
-          console.log(fitLineToWidth(footerParts.join(chalk.gray(" • ")), getRenderWidth(config.maxWidth)));
+          console.log(
+            fitLineToWidth(
+              footerParts.join(chalk.gray(" • ")),
+              getRenderWidth(config.maxWidth),
+            ),
+          );
           console.log();
         }, 1000);
       }
 
       // Wait for the interval, then fetch again
-      await new Promise(resolve => setTimeout(resolve, intervalMs));
+      await new Promise((resolve) => setTimeout(resolve, intervalMs));
 
       if (countdownInterval) {
         clearInterval(countdownInterval);
